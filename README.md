@@ -1,2 +1,3 @@
-# aoc_2018
-Advent of Code 2018 Solutions in Rust
+# Advent of Code 2018
+
+My solutions to [Advent of Code 2018](https://adventofcode.com/2018) in Rust.
