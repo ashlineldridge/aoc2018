@@ -12,6 +12,12 @@ fn main() -> Result<()> {
     let checksum = checksum(&input, vec![2, 3])?;
     println!("Checksum: {}", checksum);
 
+    if let Some(common) = find_common(&input) {
+        println!("Common: {}", common);
+    } else {
+        println!("Could not find common match");
+    }
+
     Ok(())
 }
 
@@ -33,4 +39,25 @@ fn checksum(input: &str, counts: Vec<u32>) -> Result<u32> {
     }
 
     Ok(counts.values().product())
+}
+
+fn find_common(input: &str) -> Option<String> {
+    let lines: Vec<&str> = input.lines().collect();
+    for i in 0..lines.len() {
+        for j in i + 1..lines.len() {
+            let (li, lj) = (lines[i], lines[j]);
+            let mut common = String::from("");
+            for (ci, cj) in li.chars().zip(lj.chars()) {
+                if ci == cj {
+                    common += ci.to_string().as_str();
+                }
+            }
+
+            if common.len() == li.len() - 1 {
+                return Some(common);
+            }
+        }
+    }
+
+    None
 }
