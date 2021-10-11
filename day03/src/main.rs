@@ -1,14 +1,13 @@
 use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::cell::RefCell;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     io::{self, Read},
     str::FromStr,
 };
 
-type ClaimGrid = HashMap<(u32, u32), RefCell<HashSet<Claim>>>;
+type ClaimGrid = HashMap<(u32, u32), u32>;
 
 fn main() -> Result<()> {
     let mut input = String::new();
@@ -32,6 +31,42 @@ struct Claim {
     y: u32,
     width: u32,
     height: u32,
+}
+
+struct IterPoints<'a> {
+    claim: &'a Claim,
+    px: u32,
+    py: u32,
+}
+
+impl<'a> Iterator for IterPoints<'a> {
+    type Item = (u32, u32);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.py >= (self.claim.y + self.claim.height) {
+            return None;
+        }
+
+        let res = Some((self.px, self.py));
+
+        self.px += 1;
+        if self.px >= (self.claim.x + self.claim.width) {
+            self.px = self.claim.x;
+            self.py += 1;
+        }
+
+        res
+    }
+}
+
+impl Claim {
+    fn iter_points(&self) -> IterPoints {
+        IterPoints {
+            claim: self,
+            px: self.x,
+            py: self.y,
+        }
+    }
 }
 
 impl FromStr for Claim {
@@ -63,31 +98,22 @@ impl FromStr for Claim {
 }
 
 fn parse_claims(input: &str) -> Result<Vec<Claim>> {
-    input.lines().map(|line| Claim::from_str(line)).collect()
+    input.lines().map(|line| line.parse()).collect()
 }
 
 fn claim_grid(claims: &[Claim]) -> ClaimGrid {
-    let mut grid: ClaimGrid = HashMap::new();
+    let mut grid = ClaimGrid::new();
     for claim in claims {
-        for x in claim.x..claim.x + claim.width {
-            for y in claim.y..claim.y + claim.height {
-                let mut claims = grid.entry((x, y)).or_default().borrow_mut();
-                claims.insert(claim.clone());
-            }
+        for (x, y) in claim.iter_points() {
+            *grid.entry((x, y)).or_default() += 1;
         }
     }
 
     grid
 }
 
-fn grid_overlap(grid: &ClaimGrid, min: usize) -> u32 {
-    grid.values().fold(0, |acc, c| {
-        if c.borrow().len() >= min {
-            acc + 1
-        } else {
-            acc
-        }
-    })
+fn grid_overlap(grid: &ClaimGrid, min: u32) -> u32 {
+    grid.values().filter(|&&count| count >= min).count() as u32
 }
 
 fn unique_claims(claims: &[Claim], grid: &ClaimGrid) -> Vec<Claim> {
@@ -102,18 +128,5 @@ fn unique_claims(claims: &[Claim], grid: &ClaimGrid) -> Vec<Claim> {
 }
 
 fn is_unique(claim: &Claim, grid: &ClaimGrid) -> bool {
-    for x in claim.x..claim.x + claim.width {
-        for y in claim.y..claim.y + claim.height {
-            match grid.get(&(x, y)).map(|r| r.borrow()) {
-                None => return false,
-                Some(claims) => {
-                    if claims.len() != 1 || !claims.contains(claim) {
-                        return false;
-                    }
-                }
-            }
-        }
-    }
-
-    true
+    claim.iter_points().all(|p| grid[&p] == 1)
 }
