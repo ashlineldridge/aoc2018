@@ -46,24 +46,27 @@ impl FromStr for LogEntry {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         lazy_static! {
-            static ref RE_LOG: Regex = Regex::new(r"^\[(?P<time>[^\]]+)\]\s+(?P<msg>.*)").unwrap();
-            static ref RE_BEGIN: Regex =
-                Regex::new(r"^Guard #(?P<guard_id>\d+) begins shift").unwrap();
+            static ref RE: Regex = Regex::new(
+                r"(?x)
+                ^\[(?P<time>[^\]]+)\]\s+
+                (?:Guard\ \#(?P<id>\d+)\ begins\ shift|(?P<sleep>.*))$
+            "
+            )
+            .unwrap();
         }
-        let caps = RE_LOG
+
+        let caps = RE
             .captures(s)
             .ok_or_else(|| anyhow!("Invalid log entry: {}", s))?;
-
         let time = NaiveDateTime::parse_from_str(&caps["time"], "%Y-%m-%d %H:%M")?;
-        let msg = &caps["msg"];
-        let event = match RE_BEGIN.captures(msg) {
-            Some(caps) => Event::BeginShift {
-                guard: caps["guard_id"].parse()?,
+        let event = match caps.name("id") {
+            Some(m) => Event::BeginShift {
+                guard: m.as_str().parse()?,
             },
-            None => match msg {
+            None => match &caps["sleep"] {
                 "falls asleep" => Event::FallAsleep,
                 "wakes up" => Event::WakeUp,
-                _ => bail!("Invalid log entry message: {}", msg),
+                _ => bail!("Invalid log entry message: {}", s),
             },
         };
 
@@ -125,48 +128,28 @@ fn sleep_map(log: &[LogEntry]) -> Result<SleepMap> {
     Ok(sleep_map)
 }
 
-fn max_with_index<T: PartialOrd>(s: &[T]) -> Option<(usize, &T)> {
-    s.iter().enumerate().fold(None, |acc, (i, v)| match acc {
-        None => Some((i, v)),
-        Some((_, zv)) if v > zv => Some((i, v)),
-        _ => acc,
-    })
-}
-
 fn sleep_factor1(sleep_map: &SleepMap) -> Result<u32> {
-    let mut found_guard = None;
-    let mut found_ind = 0;
-    let mut found_mins = 0;
-    for (guard, tally) in sleep_map {
-        let mins: u32 = tally.iter().sum();
-        if mins > found_mins {
-            found_guard = Some(guard);
-            found_mins = mins;
-            found_ind = max_with_index(tally).map(|r| r.0).unwrap();
-        }
-    }
-
-    if let Some(found_guard_id) = found_guard {
-        Ok(found_guard_id * found_ind as u32)
-    } else {
-        Err(anyhow!("No guards slept"))
-    }
+    sleep_factor(sleep_map, |tally| tally.iter().sum())
 }
 
 fn sleep_factor2(sleep_map: &SleepMap) -> Result<u32> {
-    let mut found_guard = None;
-    let mut found_ind = 0;
-    let mut found_mins = 0;
-    for (guard, tally) in sleep_map {
-        let (ind, &mins) = max_with_index(tally).unwrap();
-        if mins > found_mins {
-            found_guard = Some(guard);
-            found_ind = ind;
-            found_mins = mins;
-        }
-    }
+    sleep_factor(sleep_map, |tally| *tally.iter().max().unwrap())
+}
 
-    found_guard
-        .context("No guards slept")
-        .map(|guard| guard * found_ind as u32)
+fn sleep_factor<F>(sleep_map: &SleepMap, max: F) -> Result<u32>
+where
+    F: Fn(&[u32; 60]) -> u32,
+{
+    let (guard, tally) = sleep_map
+        .iter()
+        .max_by_key(|&(_, tally)| max(tally))
+        .context("Empty log")?;
+
+    let (minute, _) = tally
+        .iter()
+        .enumerate()
+        .max_by_key(|&(_, count)| *count)
+        .context("Invalid sleep tally")?;
+
+    Ok(guard * minute as u32)
 }
