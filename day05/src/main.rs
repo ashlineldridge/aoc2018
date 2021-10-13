@@ -7,18 +7,42 @@ const NULL_CHAR: char = '0';
 fn main() -> Result<()> {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
+    let input = input.trim();
 
-    let polymer = decompose(&input)?;
-    println!("Decomposed polymer has length: {}", polymer.len());
+    let polymer = part1(input);
+    println!("Part 1 answer: {}", polymer.len());
 
-    let polymer = decompose_max(&input)?;
-    println!("Maximally decomposed polymer has length: {}", polymer.len());
+    let polymer = part2(input);
+    println!("Part 2 answer: {}", polymer.len());
 
     Ok(())
 }
 
-fn decompose(polymer: &str) -> Result<String> {
-    let mut chars: Vec<char> = polymer.trim().chars().collect();
+fn part1(polymer: &str) -> String {
+    react(polymer)
+}
+
+fn part2(polymer: &str) -> String {
+    let mut min: Option<String> = None;
+    for v in 'a'..='z' {
+        let polymer: String = polymer
+            .chars()
+            .filter(|c| *c != v && *c != v.to_ascii_uppercase())
+            .collect();
+        let polymer = react(polymer.as_str());
+        println!("Test({}) decomposed polymer has length: {}", v, polymer.len());
+
+        min = match min {
+            Some(p) if p.len() < polymer.len() => Some(p),
+            _ => Some(polymer),
+        }
+    }
+
+    min.unwrap()
+}
+
+fn react(polymer: &str) -> String {
+    let mut chars: Vec<char> = polymer.chars().collect();
 
     loop {
         let mut shrunk = false;
@@ -42,24 +66,5 @@ fn decompose(polymer: &str) -> Result<String> {
         }
     }
 
-    Ok(chars.iter().filter(|c| **c != NULL_CHAR).collect())
-}
-
-fn decompose_max(polymer: &str) -> Result<String> {
-    let mut min: Option<String> = None;
-    for v in 'a'..='z' {
-        let polymer: String = polymer
-            .chars()
-            .filter(|c| *c != v && *c != v.to_ascii_uppercase())
-            .collect();
-        let polymer = decompose(polymer.as_str())?;
-        println!("Test({}) decomposed polymer has length: {}", v, polymer.len());
-
-        min = match min {
-            Some(p) if p.len() < polymer.len() => Some(p),
-            _ => Some(polymer),
-        }
-    }
-
-    Ok(min.unwrap())
+    chars.iter().filter(|c| **c != NULL_CHAR).collect()
 }
