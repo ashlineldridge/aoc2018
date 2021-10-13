@@ -2,8 +2,6 @@ use std::io::{self, Read};
 
 use anyhow::Result;
 
-const NULL_CHAR: char = '0';
-
 fn main() -> Result<()> {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
@@ -30,7 +28,11 @@ fn part2(polymer: &str) -> String {
             .filter(|c| *c != v && *c != v.to_ascii_uppercase())
             .collect();
         let polymer = react(polymer.as_str());
-        println!("Test({}) decomposed polymer has length: {}", v, polymer.len());
+        println!(
+            "Test({}) decomposed polymer has length: {}",
+            v,
+            polymer.len()
+        );
 
         min = match min {
             Some(p) if p.len() < polymer.len() => Some(p),
@@ -42,29 +44,35 @@ fn part2(polymer: &str) -> String {
 }
 
 fn react(polymer: &str) -> String {
-    let mut chars: Vec<char> = polymer.chars().collect();
+    let mut polymer: Vec<char> = polymer.chars().collect();
+    let mut reacted = vec![];
 
     loop {
         let mut shrunk = false;
-        let mut prev: Option<&mut char> = None;
-        for c in chars.iter_mut().filter(|c| **c != NULL_CHAR) {
-            if let Some(p) = prev {
-                if p != c && p.to_ascii_uppercase() == c.to_ascii_uppercase() {
-                    *p = NULL_CHAR;
-                    *c = NULL_CHAR;
-                    shrunk = true;
-                    prev = None;
-                    continue;
-                }
+        let mut i = 1;
+        while i < polymer.len() {
+            let p = polymer[i - 1];
+            let c = polymer[i];
+            if p != c && p.to_ascii_uppercase() == c.to_ascii_uppercase() {
+                shrunk = true;
+                i += 2;
+            } else {
+                reacted.push(p);
+                i += 1;
             }
+        }
 
-            prev = Some(c);
+        if i == polymer.len() {
+            reacted.push(polymer[i - 1]);
         }
 
         if !shrunk {
             break;
         }
+
+        std::mem::swap(&mut polymer, &mut reacted);
+        reacted.clear();
     }
 
-    chars.iter().filter(|c| **c != NULL_CHAR).collect()
+    reacted.iter().collect()
 }
