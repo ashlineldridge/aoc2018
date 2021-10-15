@@ -4,8 +4,10 @@ use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::{
+    cmp,
     collections::{HashMap, HashSet},
     io::{self, Read},
+    iter,
     str::FromStr,
 };
 
@@ -13,68 +15,55 @@ fn main() -> Result<()> {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
 
-    let answer = part1(&input)?;
+    let markers = read_markers(&input)?;
+
+    let answer = part1(&markers)?;
     println!("Answer to part 1: {}", answer);
 
-    let answer = part2(&input, 10000)?;
+    let answer = part2(&markers, 10000)?;
     println!("Answer to part 2: {}", answer);
 
     Ok(())
 }
 
-fn part1(input: &str) -> Result<u32> {
-    let mut beacons = read_beacons(input)?;
-    let (width, height) = grid_size(&beacons);
-    let grid = build_grid(&beacons, width, height);
+fn part1(markers: &HashSet<Coord>) -> Result<u32> {
+    let closest_grid = build_closest_grid(markers);
+    let mut count_by_marker: HashMap<&Coord, u32> = markers.iter().zip(iter::repeat(0)).collect();
 
-    for x in 0..width {
-        for y in 0..height {
-            if let Some(closest) = grid.get(&Coord { x, y }) {
-                if x == 0 || y == 0 || x == width - 1 || y == height - 1 {
-                    beacons.remove(closest);
-                }
+    for coord in closest_grid.grid_iter() {
+        if let Some(marker) = closest_grid.get(coord) {
+            if coord.x == 0 || coord.y == 0 || coord.x == closest_grid.width - 1 || coord.y == closest_grid.height - 1 {
+                count_by_marker.remove(marker);
+            } else {
+                count_by_marker.entry(marker).and_modify(|c| *c += 1);
             }
         }
     }
 
-    let mut counts: HashMap<&Coord, u32> = HashMap::new();
-    for beacon in &beacons {
-        let count = grid.values().filter(|&v| v == beacon).count();
-        counts.insert(beacon, count as u32);
-    }
-
-    Ok(*counts.values().max().unwrap_or(&0))
+    Ok(*count_by_marker.values().max().unwrap_or(&0))
 }
 
-fn part2(input: &str, within_dist: u32) -> Result<u32> {
-    let beacons = read_beacons(input)?;
-    let (width, height) = grid_size(&beacons);
-    let mut region_size = 0;
-
-    for x in 0..width {
-        for y in 0..height {
-            let dist = beacons
-                .iter()
-                .fold(0, |acc, b| acc + b.dist(&Coord { x, y }));
-            if dist < within_dist {
-                region_size += 1;
-            }
-        }
-    }
-
-    Ok(region_size)
+fn part2(markers: &HashSet<Coord>, max_dist: u32) -> Result<u32> {
+    let proximity_grid = build_proximity_grid(markers, max_dist);
+    Ok(proximity_grid.coords.values().filter(|v| **v).count() as u32)
 }
 
-type Grid = HashMap<Coord, Coord>;
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct Coord {
     x: u32,
     y: u32,
 }
 
 impl Coord {
-    fn dist(&self, other: &Coord) -> u32 { self.x.abs_diff(other.x) + self.y.abs_diff(other.y) }
+    fn dist(&self, other: &Coord) -> u32 {
+        self.x.abs_diff(other.x) + self.y.abs_diff(other.y)
+    }
+}
+
+impl Default for Coord {
+    fn default() -> Self {
+        Self { x: 0, y: 0 }
+    }
 }
 
 impl FromStr for Coord {
@@ -96,51 +85,139 @@ impl FromStr for Coord {
     }
 }
 
-fn read_beacons(input: &str) -> Result<HashSet<Coord>> {
+struct Grid<T> {
+    width: u32,
+    height: u32,
+    coords: HashMap<Coord, T>,
+}
+
+impl<T> Grid<T> {
+    fn build<F>(width: u32, height: u32, f: F) -> Grid<T>
+    where
+        F: Fn(Coord) -> Option<T>,
+    {
+        let mut coords = HashMap::new();
+        for coord in GridIter::new(width, height) {
+            if let Some(t) = f(coord) {
+                coords.insert(coord, t);
+            }
+        }
+
+        Grid {
+            width,
+            height,
+            coords,
+        }
+    }
+
+    fn get(&self, coord: Coord) -> Option<&T> {
+        self.coords.get(&coord)
+    }
+
+    fn grid_iter(&self) -> GridIter {
+        GridIter::new(self.width, self.height)
+    }
+}
+
+struct GridIter {
+    width: u32,
+    height: u32,
+    cur: Coord,
+}
+
+impl GridIter {
+    fn new(width: u32, height: u32) -> GridIter {
+        GridIter {
+            width,
+            height,
+            cur: Default::default(),
+        }
+    }
+}
+
+impl Iterator for GridIter {
+    type Item = Coord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cur.y >= (self.height) {
+            return None;
+        }
+
+        let next = self.cur;
+
+        self.cur.x += 1;
+        if self.cur.x >= (self.width) {
+            self.cur.x = 0;
+            self.cur.y += 1;
+        }
+
+        Some(next)
+    }
+}
+
+fn read_markers(input: &str) -> Result<HashSet<Coord>> {
     input.lines().map(|line| line.parse()).collect()
 }
 
-fn grid_size(beacons: &HashSet<Coord>) -> (u32, u32) {
+fn grid_size(coords: &HashSet<Coord>) -> (u32, u32) {
     let mut x_max = 0;
     let mut y_max = 0;
-    for c in beacons {
-        if c.x > x_max {
-            x_max = c.x;
-        }
-        if c.y > y_max {
-            y_max = c.y;
-        }
+    for coord in coords {
+        x_max = cmp::max(coord.x, x_max);
+        y_max = cmp::max(coord.y, y_max);
     }
+
     (x_max + 1, y_max + 1)
 }
 
-fn build_grid(beacons: &HashSet<Coord>, width: u32, height: u32) -> Grid {
-    let mut grid = Grid::new();
-    for x in 0..width {
-        for y in 0..height {
-            let mut closest_beacons = vec![];
-            let mut closest_dist = 0;
-            for beacon in beacons {
-                let dist = beacon.dist(&Coord { x, y });
-                if dist == 0 {
-                    // No beacon can be closer so stop searching.
-                    closest_beacons = vec![beacon];
-                    break;
-                }
+fn build_marker_grid(markers: &HashSet<Coord>) -> Grid<bool> {
+    let (width, height) = grid_size(&markers);
+    Grid::build(width, height, |coord| {
+        if markers.contains(&coord) {
+            Some(true)
+        } else {
+            None
+        }
+    })
+}
 
-                if closest_beacons.is_empty() || dist < closest_dist {
+fn build_closest_grid(markers: &HashSet<Coord>) -> Grid<Coord> {
+    let marker_grid = build_marker_grid(markers);
+    Grid::build(marker_grid.width, marker_grid.height, |coord| {
+        let mut exclusive = true;
+        let mut closest_marker = None;
+        let mut closest_dist = 0;
+
+        for marker in markers {
+            let dist = coord.dist(marker);
+            if closest_marker.is_some() {
+                if dist < closest_dist {
+                    closest_marker = Some(*marker);
                     closest_dist = dist;
-                    closest_beacons = vec![beacon];
+                    exclusive = true;
                 } else if dist == closest_dist {
-                    closest_beacons.push(beacon);
+                    exclusive = false;
                 }
-            }
-
-            if closest_beacons.len() == 1 {
-                grid.insert(Coord { x, y }, closest_beacons.pop().unwrap().clone());
+            } else {
+                closest_marker = Some(*marker);
+                closest_dist = dist;
             }
         }
-    }
 
-    grid
+        if exclusive {
+            closest_marker
+        } else {
+            None
+        }
+    })
+}
+
+fn build_proximity_grid(markers: &HashSet<Coord>, max_dist: u32) -> Grid<bool> {
+    let marker_grid = build_marker_grid(markers);
+    Grid::build(marker_grid.width, marker_grid.height, |coord| {
+        let dist = markers
+            .iter()
+            .fold(0, |acc, b| acc + b.dist(&coord));
+        Some(dist < max_dist)
+    })
 }
