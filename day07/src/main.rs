@@ -1,11 +1,14 @@
 use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
 use regex::Regex;
+use std::collections::{HashMap, HashSet};
 use std::{
-    collections::{HashMap, HashSet},
     io::{self, Read},
     str::FromStr,
 };
+
+const WORKER_COUNT: u32 = 5;
+const WORK_BASE_TIME_SECONDS: u32 = 60;
 
 fn main() -> Result<()> {
     let mut input = String::new();
@@ -15,20 +18,21 @@ fn main() -> Result<()> {
     let answer = part1(&deps)?;
     println!("Answer to part 1: {}", answer);
 
-    let answer = part2(&deps)?;
-    println!("Answer to part 2: {}", answer);
+    let mut worker_pool = WorkerPool::new(WORKER_COUNT);
+    let answer = part2(&deps, &mut worker_pool)?;
+    println!("Answer to part 2: {} seconds", answer);
 
     Ok(())
 }
 
 fn part1(deps: &DepsByStep) -> Result<String> {
-    let mut result = String::from("");
     let mut completed_steps = HashSet::new();
     let mut available_steps = deps
         .iter()
         .filter_map(|(s, v)| if v.is_empty() { Some(*s) } else { None })
         .collect::<HashSet<Step>>();
 
+    let mut result = String::from("");
     while !available_steps.is_empty() {
         let chosen = *available_steps.iter().max_by(|s1, s2| s2.cmp(s1)).unwrap();
         available_steps.remove(&chosen);
@@ -51,9 +55,59 @@ fn part1(deps: &DepsByStep) -> Result<String> {
     Ok(result)
 }
 
-fn part2(deps: &DepsByStep) -> Result<String> {
+fn part2(deps: &DepsByStep, worker_pool: &mut WorkerPool) -> Result<u32> {
+    let mut completed_steps = HashSet::new();
+    let mut in_flight_steps = HashSet::new();
+    let mut available_steps = deps
+        .iter()
+        .filter_map(|(s, v)| if v.is_empty() { Some(*s) } else { None })
+        .collect::<HashSet<Step>>();
 
-    Ok(String::from(""))
+    let mut result = 0;
+    loop {
+        if completed_steps.len() == deps.len() {
+            break;
+        }
+
+        while !available_steps.is_empty() && worker_pool.is_ready() {
+            let chosen = *available_steps.iter().max_by(|s1, s2| s2.cmp(s1)).unwrap();
+            let duration = WORK_BASE_TIME_SECONDS + (chosen as u8 - b'A') as u32 + 1;
+            worker_pool.assign(&Task::new(chosen, duration));
+            in_flight_steps.insert(chosen);
+            available_steps.remove(&chosen);
+        }
+
+        loop {
+            worker_pool.tick();
+            result += 1;
+            let batch_completed = worker_pool.receive();
+            if !batch_completed.is_empty() {
+                completed_steps.extend(&batch_completed);
+                in_flight_steps = in_flight_steps
+                    .difference(&batch_completed)
+                    .cloned()
+                    .collect();
+
+                let unlocked_steps = deps
+                    .iter()
+                    .filter_map(|(s, v)| {
+                        if v.is_subset(&completed_steps)
+                            && !completed_steps.contains(s)
+                            && !in_flight_steps.contains(s)
+                        {
+                            Some(*s)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<HashSet<Step>>();
+                available_steps.extend(unlocked_steps);
+                break;
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 type Step = char;
@@ -78,6 +132,111 @@ impl FromStr for DepPair {
             .ok_or_else(|| anyhow!("Invalid line: {}", s))?;
 
         Ok(DepPair(caps["s2"].parse()?, caps["s1"].parse()?))
+    }
+}
+
+struct WorkerPool {
+    workers: Vec<Worker>,
+}
+
+impl WorkerPool {
+    fn new(size: u32) -> WorkerPool {
+        let mut worker_pool = WorkerPool { workers: vec![] };
+        for _ in 0..size {
+            worker_pool.workers.push(Worker::new());
+        }
+        worker_pool
+    }
+
+    fn assign(&mut self, task: &Task) {
+        for worker in &mut self.workers {
+            if worker.is_ready() {
+                worker.assign(task);
+                return;
+            }
+        }
+
+        panic!("No available worker");
+    }
+
+    fn tick(&mut self) {
+        for worker in &mut self.workers {
+            worker.tick();
+        }
+    }
+
+    fn receive(&mut self) -> HashSet<Step> {
+        let mut completed = HashSet::new();
+        for worker in &mut self.workers {
+            if let Some(step) = worker.receive() {
+                completed.insert(step);
+            }
+        }
+
+        completed
+    }
+
+    fn is_ready(&self) -> bool {
+        for worker in &self.workers {
+            if worker.is_ready() {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+struct Worker {
+    task: Option<Task>,
+}
+
+impl Worker {
+    fn new() -> Worker {
+        Worker { task: None }
+    }
+
+    fn assign(&mut self, task: &Task) {
+        if self.task.is_some() {
+            panic!("Worker has incomplete work");
+        }
+        self.task = Some(task.clone());
+    }
+
+    fn receive(&mut self) -> Option<Step> {
+        match &self.task {
+            Some(task) if task.is_complete() => self.task.take().map(|u| u.step),
+            _ => None,
+        }
+    }
+
+    fn tick(&mut self) {
+        if let Some(task) = self.task.as_mut() {
+            task.tick();
+        }
+    }
+
+    fn is_ready(&self) -> bool {
+        self.task.is_none()
+    }
+}
+
+#[derive(Clone)]
+struct Task {
+    step: Step,
+    duration: u32,
+}
+
+impl Task {
+    fn new(step: Step, duration: u32) -> Task {
+        Task { step, duration }
+    }
+
+    fn tick(&mut self) {
+        self.duration = self.duration.saturating_sub(1);
+    }
+
+    fn is_complete(&self) -> bool {
+        self.duration == 0
     }
 }
 
