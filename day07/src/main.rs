@@ -57,13 +57,13 @@ fn part1(deps: &DepsByStep) -> Result<String> {
 
 fn part2(deps: &DepsByStep, worker_pool: &mut WorkerPool) -> Result<u32> {
     let mut completed_steps = HashSet::new();
-    let mut in_flight_steps = HashSet::new();
+    let mut assigned_steps = HashSet::new();
     let mut available_steps = deps
         .iter()
         .filter_map(|(s, v)| if v.is_empty() { Some(*s) } else { None })
         .collect::<HashSet<Step>>();
 
-    let mut result = 0;
+    let mut seconds = 0;
     loop {
         if completed_steps.len() == deps.len() {
             break;
@@ -72,18 +72,18 @@ fn part2(deps: &DepsByStep, worker_pool: &mut WorkerPool) -> Result<u32> {
         while !available_steps.is_empty() && worker_pool.is_ready() {
             let chosen = *available_steps.iter().max_by(|s1, s2| s2.cmp(s1)).unwrap();
             let duration = WORK_BASE_TIME_SECONDS + (chosen as u8 - b'A') as u32 + 1;
-            worker_pool.assign(&Task::new(chosen, duration));
-            in_flight_steps.insert(chosen);
+            worker_pool.assign(chosen, duration);
+            assigned_steps.insert(chosen);
             available_steps.remove(&chosen);
         }
 
         loop {
             worker_pool.tick();
-            result += 1;
+            seconds += 1;
             let batch_completed = worker_pool.receive();
             if !batch_completed.is_empty() {
                 completed_steps.extend(&batch_completed);
-                in_flight_steps = in_flight_steps
+                assigned_steps = assigned_steps
                     .difference(&batch_completed)
                     .cloned()
                     .collect();
@@ -93,7 +93,7 @@ fn part2(deps: &DepsByStep, worker_pool: &mut WorkerPool) -> Result<u32> {
                     .filter_map(|(s, v)| {
                         if v.is_subset(&completed_steps)
                             && !completed_steps.contains(s)
-                            && !in_flight_steps.contains(s)
+                            && !assigned_steps.contains(s)
                         {
                             Some(*s)
                         } else {
@@ -107,7 +107,7 @@ fn part2(deps: &DepsByStep, worker_pool: &mut WorkerPool) -> Result<u32> {
         }
     }
 
-    Ok(result)
+    Ok(seconds)
 }
 
 type Step = char;
@@ -148,10 +148,10 @@ impl WorkerPool {
         worker_pool
     }
 
-    fn assign(&mut self, task: &Task) {
+    fn assign(&mut self, step: Step, duration: u32) {
         for worker in &mut self.workers {
             if worker.is_ready() {
-                worker.assign(task);
+                worker.assign(step, duration);
                 return;
             }
         }
@@ -187,56 +187,56 @@ impl WorkerPool {
 }
 
 struct Worker {
-    task: Option<Task>,
+    status: Status,
 }
 
 impl Worker {
     fn new() -> Worker {
-        Worker { task: None }
+        Worker {
+            status: Status::Idle,
+        }
     }
 
-    fn assign(&mut self, task: &Task) {
-        if self.task.is_some() {
+    fn is_ready(&self) -> bool {
+        self.status.is_idle()
+    }
+
+    fn assign(&mut self, step: Step, duration: u32) {
+        if !self.status.is_idle() {
             panic!("Worker has incomplete work");
         }
-        self.task = Some(task.clone());
+        self.status = Status::Working {
+            step,
+            remaining: duration,
+        };
     }
 
     fn receive(&mut self) -> Option<Step> {
-        match &self.task {
-            Some(task) if task.is_complete() => self.task.take().map(|u| u.step),
+        match self.status {
+            Status::Working { step, remaining } if remaining == 0 => {
+                self.status = Status::Idle;
+                Some(step)
+            }
             _ => None,
         }
     }
 
     fn tick(&mut self) {
-        if let Some(task) = self.task.as_mut() {
-            task.tick();
+        if let Status::Working { step: _, remaining } = &mut self.status {
+            *remaining = remaining.saturating_sub(1);
         }
     }
-
-    fn is_ready(&self) -> bool {
-        self.task.is_none()
-    }
 }
 
-#[derive(Clone)]
-struct Task {
-    step: Step,
-    duration: u32,
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Status {
+    Idle,
+    Working { step: Step, remaining: u32 },
 }
 
-impl Task {
-    fn new(step: Step, duration: u32) -> Task {
-        Task { step, duration }
-    }
-
-    fn tick(&mut self) {
-        self.duration = self.duration.saturating_sub(1);
-    }
-
-    fn is_complete(&self) -> bool {
-        self.duration == 0
+impl Status {
+    fn is_idle(&self) -> bool {
+        *self == Status::Idle
     }
 }
 
