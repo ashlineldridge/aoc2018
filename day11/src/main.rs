@@ -1,56 +1,59 @@
 use anyhow::Result;
 use std::io::{self, Read};
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
 
     let serial = input.trim().parse::<usize>()?;
     let fuel_grid = FuelGrid::new(300, 300, serial);
 
-    part1(&fuel_grid);
-    part2(&fuel_grid);
+    part1(fuel_grid.clone()).await;
+    part2(fuel_grid.clone()).await;
 
     Ok(())
 }
 
-fn part1(fuel_grid: &FuelGrid) {
+async fn part1(fuel_grid: FuelGrid) {
     let cell_group = find_best_cell_group(fuel_grid, 3).unwrap();
     println!(
         "Part 1: Max power is {} at ({}, {})",
-        cell_group.total_power(),
-        cell_group.x,
-        cell_group.y
+        cell_group.total_power, cell_group.x, cell_group.y
     );
 }
 
-fn part2(fuel_grid: &FuelGrid) {
-    let mut best_cell_group: Option<FuelCellGroup> = None;
+async fn part2(fuel_grid: FuelGrid) {
+    let mut handles = vec![];
     for size in 1..=fuel_grid.width {
-        let cell_group = find_best_cell_group(fuel_grid, size).unwrap();
-        println!("Using group size {} max power is {}", size, cell_group.total_power());
-        best_cell_group = match &best_cell_group {
-            Some(g) if g.total_power() > cell_group.total_power() => best_cell_group,
-            _ => Some(cell_group),
-        };
+        let fuel_grid = fuel_grid.clone();
+        let handle = tokio::task::spawn(async move {
+            find_best_cell_group(fuel_grid, size)
+        });
+        handles.push(handle);
     }
 
-    let best_cell_group = best_cell_group.unwrap();
+    let mut results = vec![];
+    for handle in handles {
+        let result = handle.await.unwrap().unwrap();
+        results.push(result);
+    }
+
+    let cell_group = results.iter().max_by_key(|g| g.total_power).unwrap();
+
     println!(
         "Part 2: Max power is {} at ({}, {}) using group size {}",
-        best_cell_group.total_power(),
-        best_cell_group.x,
-        best_cell_group.y,
-        best_cell_group.group_width,
+        cell_group.total_power, cell_group.x, cell_group.y, cell_group.width,
     );
 }
 
-fn find_best_cell_group(fuel_grid: &FuelGrid, size: usize) -> Option<FuelCellGroup> {
+fn find_best_cell_group(fuel_grid: FuelGrid, size: usize) -> Option<FuelCellGroup> {
     fuel_grid
         .cell_groups(size, size)
-        .max_by_key(|g| g.total_power())
+        .max_by_key(|g| g.total_power)
 }
 
+#[derive(Clone)]
 struct FuelGrid {
     width: usize,
     height: usize,
@@ -85,66 +88,61 @@ impl FuelGrid {
 
 struct FuelGridIter<'a> {
     fuel_grid: &'a FuelGrid,
-    group_width: usize,
-    group_height: usize,
-    curr_group: FuelCellGroup<'a>,
+    width: usize,
+    height: usize,
+    curr_x: usize,
+    curr_y: usize,
 }
 
 impl<'a> FuelGridIter<'a> {
-    fn new(fuel_grid: &FuelGrid, group_width: usize, group_height: usize) -> FuelGridIter {
+    fn new(fuel_grid: &FuelGrid, width: usize, height: usize) -> FuelGridIter {
         FuelGridIter {
             fuel_grid,
-            group_width,
-            group_height,
-            curr_group: FuelCellGroup {
-                fuel_grid,
-                x: 1,
-                y: 1,
-                group_width,
-                group_height,
-            },
+            width,
+            height,
+            curr_x: 1,
+            curr_y: 1,
         }
     }
 }
 
 impl<'a> Iterator for FuelGridIter<'a> {
-    type Item = FuelCellGroup<'a>;
+    type Item = FuelCellGroup;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.curr_group.y + self.group_height > self.fuel_grid.height + 1 {
+        if self.curr_y + self.height > self.fuel_grid.height + 1 {
             return None;
         }
 
-        let res = self.curr_group.clone();
-
-        self.curr_group.x += 1;
-        if self.curr_group.x + self.group_width > self.fuel_grid.width + 1 {
-            self.curr_group.x = 1;
-            self.curr_group.y += 1;
-        }
-
-        Some(res)
-    }
-}
-
-#[derive(Clone)]
-struct FuelCellGroup<'a> {
-    fuel_grid: &'a FuelGrid,
-    x: usize,
-    y: usize,
-    group_width: usize,
-    group_height: usize,
-}
-
-impl<'a> FuelCellGroup<'a> {
-    fn total_power(&self) -> i32 {
-        let mut power = 0;
-        for x in self.x..self.x + self.group_width {
-            for y in self.y..self.y + self.group_height {
-                power += self.fuel_grid.cell_power(x, y).unwrap();
+        let mut cell_group_power = 0;
+        for x in self.curr_x..self.curr_x + self.width {
+            for y in self.curr_y..self.curr_y + self.height {
+                cell_group_power += self.fuel_grid.cell_power(x, y).unwrap();
             }
         }
 
-        power
+        let cell_group = FuelCellGroup {
+            x: self.curr_x,
+            y: self.curr_y,
+            width: self.width,
+            height: self.height,
+            total_power: cell_group_power,
+        };
+
+        self.curr_x += 1;
+        if self.curr_x + self.width > self.fuel_grid.width + 1 {
+            self.curr_x = 1;
+            self.curr_y += 1;
+        }
+
+        Some(cell_group)
     }
+}
+
+struct FuelCellGroup {
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    total_power: i32,
 }
