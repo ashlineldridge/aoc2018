@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::{
+    fmt::Display,
     io::{self, Read},
     str::FromStr,
 };
@@ -10,8 +11,11 @@ fn main() -> Result<()> {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
 
-    let plant_state: PlantState = input.parse()?;
-    println!("Read {:?}", plant_state);
+    let mut plant_state: PlantState = input.parse()?;
+    for _ in 0..20 {
+        println!("{}", plant_state);
+        plant_state.advance();
+    }
 
     Ok(())
 }
@@ -23,13 +27,17 @@ struct PlantState {
 }
 
 impl PlantState {
-    // fn advance(&mut self) {
-    // for (i, v) in self.state.iter_mut().enumerate() {
-    // for r in &self.rules {
-    // if let Some(outcome) = r.eval(self.state, i) {}
-    // }
-    // }
-    // }
+    fn advance(&mut self) {
+        let c = self.state.clone();
+        for (i, v) in self.state.iter_mut().enumerate() {
+            for r in &self.rules {
+                if let Some(outcome) = r.eval(&c, i as i32) {
+                    *v = outcome;
+                    break;
+                }
+            }
+        }
+    }
 }
 
 impl FromStr for PlantState {
@@ -42,16 +50,30 @@ impl FromStr for PlantState {
             .and_then(|line| line.split_whitespace().last())
             .map(|pattern| pattern.chars().map(|c| c == '#').collect::<Vec<bool>>())
             .context("Invalid input")?;
-        let rules: Result<Vec<PlantRule>> = lines[1..].iter().filter_map(|line| {
-            if line.is_empty() {
-                None
-            } else {
-                Some(line.parse())
-            }
-        }).collect();
+        let rules: Result<Vec<PlantRule>> = lines[1..]
+            .iter()
+            .filter_map(|line| {
+                if line.is_empty() {
+                    None
+                } else {
+                    Some(line.parse())
+                }
+            })
+            .collect();
         let rules = rules?;
 
         Ok(PlantState { state, rules })
+    }
+}
+
+impl Display for PlantState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state: String = self
+            .state
+            .iter()
+            .map(|v| if *v { '#' } else { '.' })
+            .collect();
+        f.write_str(&state)
     }
 }
 
