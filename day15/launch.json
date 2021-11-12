@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "lldb-vscode-launch",
+            "type": "lldb-vscode",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/day15",
+            "args": [],
+	    "env": {},
+            "cwd": "${workspaceFolder}",
+            "stopOnEntry": false,
+	    "debuggerRoot": "${workspaceFolder}"
+        }
+     ]
+}
