@@ -35,10 +35,6 @@ create_day() {
 
   # Create a new Cargo bin directory.
   cargo new --bin "${day_dir}"
-  # Add a rustfmt.toml file so IDEs behave.
-  cat << EOF > "${day_dir}/rustfmt.toml"
-edition = "2018"
-EOF
 
   # Create an empty input/input.txt file for the day.
   local input_dir="${day_dir}/input"
