@@ -1,29 +1,34 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
+use enum_iterator::IntoEnumIterator;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::{
+    collections::{HashMap, HashSet},
     io::{self, Read},
     str::FromStr,
 };
-use strum::IntoEnumIterator;
-use strum_macros::EnumIter;
 
 fn main() -> Result<()> {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
 
-    part1(input)?;
+    let sections = input.split("\n\n\n\n").collect::<Vec<_>>();
+    ensure!(sections.len() == 2, "invalid program input");
+
+    let training_data = read_samples(sections[0])?;
+    let program_data = read_registers(sections[1])?;
+
+    part1(&training_data)?;
+    part2(&training_data, &program_data)?;
 
     Ok(())
 }
 
-fn part1(input: String) -> Result<()> {
-    let samples = read_samples(&input)?;
+fn part1(samples: &[Sample]) -> Result<()> {
     let mut three_or_more = 0;
-
     for sample in samples {
-        let ops = decode_sample(&sample);
-        if ops.len() >= 3 {
+        let results = Machine::test_sample(sample);
+        if results.len() >= 3 {
             three_or_more += 1;
         }
     }
@@ -33,7 +38,20 @@ fn part1(input: String) -> Result<()> {
     Ok(())
 }
 
-type RegVal = u16;
+fn part2(training_data: &[Sample], program_data: &[Registers]) -> Result<()> {
+    let mut machine = Machine::build(training_data)?;
+
+    for raw in program_data {
+        let instr = machine.decode_instruction(raw)?;
+        machine.execute_instruction(&instr);
+    }
+
+    println!("Part 2 answer: {}", machine.registers.get_reg(0_usize));
+
+    Ok(())
+}
+
+type RegVal = u32;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Registers([RegVal; Registers::TOTAL_REGISTERS]);
@@ -41,14 +59,14 @@ struct Registers([RegVal; Registers::TOTAL_REGISTERS]);
 impl Registers {
     const TOTAL_REGISTERS: usize = 4;
 
-    fn get_reg<T: Into<usize> + Copy>(&self, index: T) -> RegVal {
-        Self::assert_index(index.into());
-        self.0[index.into()]
+    fn get_reg(&self, index: usize) -> RegVal {
+        Self::assert_index(index);
+        self.0[index]
     }
 
-    fn set_reg<T: Into<usize> + Copy>(&mut self, index: T, value: RegVal) {
-        Self::assert_index(index.into());
-        self.0[index.into()] = value;
+    fn set_reg(&mut self, index: usize, value: RegVal) {
+        Self::assert_index(index);
+        self.0[index] = value;
     }
 
     fn assert_index(index: usize) {
@@ -73,6 +91,12 @@ impl FromStr for Registers {
     }
 }
 
+impl Default for Registers {
+    fn default() -> Self {
+        Self([0; Registers::TOTAL_REGISTERS])
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Instruction {
     op: Op,
@@ -81,7 +105,7 @@ struct Instruction {
     c: RegVal,
 }
 
-#[derive(Clone, Copy, Debug, EnumIter, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, IntoEnumIterator, Eq, Hash, PartialEq)]
 enum Op {
     Addr,
     Addi,
@@ -102,7 +126,7 @@ enum Op {
 }
 
 impl Instruction {
-    fn exec(&self, registers: &mut Registers) {
+    fn execute(&self, registers: &mut Registers) {
         match self.op {
             Op::Addr => self.addr(registers),
             Op::Addi => self.addi(registers),
@@ -124,90 +148,90 @@ impl Instruction {
     }
 
     fn addr(&self, registers: &mut Registers) {
-        let res = registers.get_reg(self.a) + registers.get_reg(self.b);
-        registers.set_reg(self.c, res);
+        let res = registers.get_reg(self.a as usize) + registers.get_reg(self.b as usize);
+        registers.set_reg(self.c as usize, res);
     }
 
     fn addi(&self, registers: &mut Registers) {
-        let res = registers.get_reg(self.a) + self.b;
-        registers.set_reg(self.c, res);
+        let res = registers.get_reg(self.a as usize) + self.b;
+        registers.set_reg(self.c as usize, res);
     }
 
     fn mulr(&self, registers: &mut Registers) {
-        let res = registers.get_reg(self.a) * registers.get_reg(self.b);
-        registers.set_reg(self.c, res);
+        let res = registers.get_reg(self.a as usize) * registers.get_reg(self.b as usize);
+        registers.set_reg(self.c as usize, res);
     }
 
     fn muli(&self, registers: &mut Registers) {
-        let res = registers.get_reg(self.a) * self.b;
-        registers.set_reg(self.c, res);
+        let res = registers.get_reg(self.a as usize) * self.b;
+        registers.set_reg(self.c as usize, res);
     }
 
     fn banr(&self, registers: &mut Registers) {
-        let res = registers.get_reg(self.a) & registers.get_reg(self.b);
-        registers.set_reg(self.c, res);
+        let res = registers.get_reg(self.a as usize) & registers.get_reg(self.b as usize);
+        registers.set_reg(self.c as usize, res);
     }
 
     fn bani(&self, registers: &mut Registers) {
-        let res = registers.get_reg(self.a) & self.b;
-        registers.set_reg(self.c, res);
+        let res = registers.get_reg(self.a as usize) & self.b;
+        registers.set_reg(self.c as usize, res);
     }
 
     fn borr(&self, registers: &mut Registers) {
-        let res = registers.get_reg(self.a) | registers.get_reg(self.b);
-        registers.set_reg(self.c, res);
+        let res = registers.get_reg(self.a as usize) | registers.get_reg(self.b as usize);
+        registers.set_reg(self.c as usize, res);
     }
 
     fn bori(&self, registers: &mut Registers) {
-        let res = registers.get_reg(self.a) | self.b;
-        registers.set_reg(self.c, res);
+        let res = registers.get_reg(self.a as usize) | self.b;
+        registers.set_reg(self.c as usize, res);
     }
 
     fn setr(&self, registers: &mut Registers) {
-        registers.set_reg(self.c, registers.get_reg(self.a));
+        registers.set_reg(self.c as usize, registers.get_reg(self.a as usize));
     }
 
     fn seti(&self, registers: &mut Registers) {
-        registers.set_reg(self.c, self.a);
+        registers.set_reg(self.c as usize, self.a);
     }
 
     fn gtir(&self, registers: &mut Registers) {
-        let res = (self.a > registers.get_reg(self.b)) as RegVal;
-        registers.set_reg(self.c, res);
+        let res = (self.a > registers.get_reg(self.b as usize)) as RegVal;
+        registers.set_reg(self.c as usize, res);
     }
 
     fn gtri(&self, registers: &mut Registers) {
-        let res = (registers.get_reg(self.a) > self.b) as RegVal;
-        registers.set_reg(self.c, res);
+        let res = (registers.get_reg(self.a as usize) > self.b) as RegVal;
+        registers.set_reg(self.c as usize, res);
     }
 
     fn gtrr(&self, registers: &mut Registers) {
-        let res = (registers.get_reg(self.a) > registers.get_reg(self.b)) as RegVal;
-        registers.set_reg(self.c, res);
+        let res =
+            (registers.get_reg(self.a as usize) > registers.get_reg(self.b as usize)) as RegVal;
+        registers.set_reg(self.c as usize, res);
     }
 
     fn eqir(&self, registers: &mut Registers) {
-        let res = (self.a == registers.get_reg(self.b)) as RegVal;
-        registers.set_reg(self.c, res);
+        let res = (self.a == registers.get_reg(self.b as usize)) as RegVal;
+        registers.set_reg(self.c as usize, res);
     }
 
     fn eqri(&self, registers: &mut Registers) {
-        let res = (registers.get_reg(self.a) == self.b) as RegVal;
-        registers.set_reg(self.c, res);
+        let res = (registers.get_reg(self.a as usize) == self.b) as RegVal;
+        registers.set_reg(self.c as usize, res);
     }
 
     fn eqrr(&self, registers: &mut Registers) {
-        let res = (registers.get_reg(self.a) == registers.get_reg(self.b)) as RegVal;
-        registers.set_reg(self.c, res);
+        let res =
+            (registers.get_reg(self.a as usize) == registers.get_reg(self.b as usize)) as RegVal;
+        registers.set_reg(self.c as usize, res);
     }
 }
 
 struct Sample {
     before: Registers,
     after: Registers,
-    a: RegVal,
-    b: RegVal,
-    c: RegVal,
+    instr: Registers,
 }
 
 impl FromStr for Sample {
@@ -228,14 +252,10 @@ impl FromStr for Sample {
             .captures(s)
             .ok_or_else(|| anyhow!("Invalid sample: {}", s))?;
 
-        let instr = caps["instr"].parse::<Registers>()?;
-
         Ok(Self {
             before: caps["before"].replace(",", "").parse()?,
             after: caps["after"].replace(",", "").parse()?,
-            a: instr.get_reg(1_usize),
-            b: instr.get_reg(2_usize),
-            c: instr.get_reg(3_usize),
+            instr: caps["instr"].parse()?,
         })
     }
 }
@@ -255,21 +275,131 @@ fn read_samples(input: &str) -> Result<Vec<Sample>> {
     Ok(samples)
 }
 
-fn decode_sample(sample: &Sample) -> Vec<Op> {
-    let mut compatible_ops = vec![];
-    for op in Op::iter() {
-        let instr = Instruction {
-            op,
-            a: sample.a,
-            b: sample.b,
-            c: sample.c,
-        };
-        let mut test = sample.before.clone();
-        instr.exec(&mut test);
-        if test == sample.after {
-            compatible_ops.push(op);
+fn read_registers(input: &str) -> Result<Vec<Registers>> {
+    input
+        .lines()
+        .map(|line| line.parse())
+        .collect::<Result<Vec<_>>>()
+}
+
+struct Machine {
+    registers: Registers,
+    op_mapping: HashMap<RegVal, Op>,
+}
+
+impl Machine {
+    /// Attempts to build a machine based on the supplied sample data.
+    ///
+    /// This will return an `Ok` if the sample data is complete. Sample data is
+    /// considered complete when a single instruction can be found for each opcode.
+    fn build(samples: &[Sample]) -> Result<Machine> {
+        // Calculate the divergent ops - i.e., the opcodes for which there are one or
+        // or more possible ops based on evaluating each sample in isolation.
+        let mut divergent_ops: HashMap<RegVal, HashSet<Op>> = HashMap::new();
+        for sample in samples {
+            // Get the set of possible ops for the current sample.
+            let sample_possible_ops = Self::test_sample(sample);
+
+            // Update the existing possible ops for the sample's opcode to be equal
+            // to the intersection of the set derived from the current sample and the
+            // existing set. Whatever op we finally decide on must be able to meet
+            // the requirements of every sample that involves that opcode.
+            let possible_ops = divergent_ops
+                .entry(sample.instr.get_reg(0))
+                .or_insert_with(|| sample_possible_ops.clone());
+            *possible_ops = possible_ops
+                .intersection(&sample_possible_ops)
+                .cloned()
+                .collect::<HashSet<_>>();
         }
+
+        // At this point, the set of all op possibilities must include an entry for
+        // every op otherwise we won't be able to derive the full instruction set.
+        ensure!(
+            divergent_ops.len() == Op::VARIANT_COUNT,
+            "incomplete training data"
+        );
+
+        // We'll repeatedly sweep across the op possibilites gathering
+        let mut convergent_ops: HashMap<RegVal, Op> = HashMap::new();
+        loop {
+            // Calculate the next set of opcodes that have converged onto a single op.
+            let next_converged = divergent_ops
+                .iter()
+                .filter_map(|(opcode, ops)| {
+                    if ops.len() == 1 {
+                        Some((*opcode, *ops.iter().next().unwrap()))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<HashMap<_, _>>();
+
+            ensure!(!next_converged.is_empty(), "could not converge sample data");
+
+            // Add each newly converged opcode/op entry into the convergent map and remove
+            // it from the divergent map.
+            for (opcode, op) in next_converged {
+                convergent_ops.insert(opcode, op);
+                divergent_ops.remove(&opcode);
+            }
+
+            // If the set of convergent ops is complete we're done.
+            let convergent_ops = convergent_ops.values().cloned().collect::<HashSet<_>>();
+            if convergent_ops.len() == Op::VARIANT_COUNT {
+                break;
+            }
+
+            // For each divergent op, remove any of the convergent ops from its set of possibilities.
+            for (_, ops) in divergent_ops.iter_mut() {
+                *ops = ops
+                    .difference(&convergent_ops)
+                    .cloned()
+                    .collect::<HashSet<_>>();
+            }
+        }
+
+        Ok(Machine {
+            registers: Default::default(),
+            op_mapping: convergent_ops,
+        })
     }
 
-    compatible_ops
+    fn decode_instruction(&self, raw: &Registers) -> Result<Instruction> {
+        let opcode = raw.get_reg(0);
+        let op = *self
+            .op_mapping
+            .get(&opcode)
+            .context(format!("invalid opcode: {}", opcode))?;
+
+        Ok(Instruction {
+            op,
+            a: raw.get_reg(1),
+            b: raw.get_reg(2),
+            c: raw.get_reg(3),
+        })
+    }
+
+    fn execute_instruction(&mut self, instruction: &Instruction) {
+        instruction.execute(&mut self.registers);
+    }
+
+    fn test_sample(sample: &Sample) -> HashSet<Op> {
+        let mut compatible_ops = HashSet::new();
+        for op in Op::into_enum_iter() {
+            let instr = Instruction {
+                op,
+                a: sample.instr.get_reg(1),
+                b: sample.instr.get_reg(2),
+                c: sample.instr.get_reg(3),
+            };
+            let mut test = sample.before.clone();
+            instr.execute(&mut test);
+            if test == sample.after {
+                compatible_ops.insert(op);
+            }
+        }
+
+        compatible_ops
+    }
 }
